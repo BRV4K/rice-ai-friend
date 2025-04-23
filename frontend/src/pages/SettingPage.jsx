@@ -107,6 +107,7 @@ export default function SettingPage() {
             humor,
             argumentativeness,
             interests,
+            onboardingCompleted: true, // Устанавливаем флаг онбординга
         };
 
         // Сохраняем настройки в Redux

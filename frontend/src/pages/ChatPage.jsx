@@ -7,13 +7,62 @@ import WebApp from '@twa-dev/sdk';
 export default function ChatPage() {
     const [input, setInput] = useState('');
     const [isTyping, setIsTyping] = useState(false);
+    const [isInputFocused, setIsInputFocused] = useState(false);
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
     const navigate = useNavigate();
     const dispatch = useDispatch();
     const messages = useSelector((state) => state.chat.messages);
     const settings = useSelector((state) => state.settings);
     const messagesEndRef = useRef(null);
-    const inputRef = useRef(null);
+    const textareaRef = useRef(null);
     const chatMessagesRef = useRef(null);
+
+    // Отключаем вертикальные свайпы и разворачиваем Mini App
+    useEffect(() => {
+        if (WebApp) {
+            WebApp.disableVerticalSwipes();
+            WebApp.expand();
+            console.log('Vertical swipes disabled, Mini App expanded');
+        }
+    }, []);
+
+    // Отслеживание высоты клавиатуры через window.visualViewport
+    useEffect(() => {
+        const handleVisualViewport = () => {
+            if (window.visualViewport) {
+                const newKeyboardHeight = window.innerHeight - window.visualViewport.height;
+                setKeyboardHeight(newKeyboardHeight > 0 ? newKeyboardHeight : 0);
+                // Предотвращаем смещение вьюпорта
+                if (window.scrollY !== 0 || window.visualViewport.offsetTop !== 0) {
+                    window.scrollTo(0, 0);
+                }
+            }
+        };
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', handleVisualViewport);
+            window.visualViewport.addEventListener('scroll', handleVisualViewport);
+        }
+
+        return () => {
+            if (window.visualViewport) {
+                window.visualViewport.removeEventListener('resize', handleVisualViewport);
+                window.visualViewport.removeEventListener('scroll', handleVisualViewport);
+            }
+        };
+    }, []);
+
+    // Отслеживание window.scrollY
+    useEffect(() => {
+        const handleScroll = () => {
+            // Принудительно возвращаем scrollY к 0
+            if (window.scrollY !== 0) {
+                window.scrollTo(0, 0);
+            }
+        };
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
 
     const userId = WebApp.initDataUnsafe?.user?.id?.toString() || 'default';
     console.log('User ID:', userId);
@@ -32,7 +81,6 @@ export default function ChatPage() {
                     timestamp: new Date(msg.timestamp).toISOString(),
                 }));
                 dispatch(setMessages(normalizedData));
-                // Прокрутка к последнему сообщению после загрузки
                 if (messagesEndRef.current) {
                     setTimeout(() => {
                         console.log('Initial scroll to bottom, messages count:', normalizedData.length);
@@ -46,7 +94,6 @@ export default function ChatPage() {
     }, [dispatch, userId]);
 
     useEffect(() => {
-        // Прокрутка к последнему сообщению при изменении messages
         if (messagesEndRef.current) {
             setTimeout(() => {
                 console.log('Scrolling to bottom, messages count:', messages.length);
@@ -56,28 +103,53 @@ export default function ChatPage() {
     }, [messages]);
 
     useEffect(() => {
-        // Обработчик изменения размера для устранения отступов
         const handleResize = () => {
-            console.log('Resize event, window.scrollY:', window.scrollY, 'window.innerHeight:', window.innerHeight);
-            setTimeout(() => {
-                window.scrollTo(0, 0);
-            }, 100);
+            console.log('Resize event:', {
+                windowScrollY: window.scrollY,
+                windowInnerHeight: window.innerHeight,
+                visualViewportHeight: window.visualViewport?.height,
+            });
+            window.scrollTo(0, 0);
         };
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
     useEffect(() => {
-        // Обработчик touchend для сенсорных событий
         const handleTouchEnd = () => {
-            setTimeout(() => {
-                console.log('Touchend event, window.scrollY:', window.scrollY);
-                window.scrollTo(0, 0);
-            }, 300);
+            console.log('Touchend event:', {
+                windowScrollY: window.scrollY,
+            });
+            window.scrollTo(0, 0);
         };
         document.addEventListener('touchend', handleTouchEnd);
         return () => document.removeEventListener('touchend', handleTouchEnd);
     }, []);
+
+    // Динамическая высота textarea
+    useEffect(() => {
+        const textarea = textareaRef.current;
+        if (textarea) {
+            // Сбрасываем высоту, чтобы вычислить реальную высоту содержимого
+            textarea.style.height = 'auto';
+            // Устанавливаем высоту на основе scrollHeight, но не больше 120px
+            const newHeight = Math.min(textarea.scrollHeight, 120);
+            textarea.style.height = `${newHeight}px`;
+            // Прокручиваем к низу textarea
+            textarea.scrollTop = textarea.scrollHeight;
+        }
+    }, [input]);
+
+    // Прокрутка при изменении keyboardHeight
+    useEffect(() => {
+        if (isInputFocused && chatMessagesRef.current && messagesEndRef.current) {
+            setTimeout(() => {
+                console.log('Adjusting scroll due to keyboard height:', keyboardHeight);
+                messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+            }, 300); // Задержка для ожидания завершения анимации клавиатуры
+        }
+    }, [keyboardHeight, isInputFocused]);
 
     const handleSendMessage = async () => {
         if (!input.trim()) return;
@@ -108,27 +180,13 @@ export default function ChatPage() {
             console.error('Failed to send message:', err);
         } finally {
             setIsTyping(false);
-            // Закрываем клавиатуру с задержкой
-            setTimeout(() => {
-                if (inputRef.current) {
-                    console.log('Blurring inputRef (click)');
-                    inputRef.current.blur();
-                } else {
-                    console.log('Blurring activeElement (click)');
-                    document.activeElement.blur();
-                }
-            }, );
-            // Прокручиваем страницу к верху
-            setTimeout(() => {
-                console.log('Before scroll (click), window.scrollY:', window.scrollY);
-                window.scrollTo(0, 0);
-                console.log('After scroll (click), window.scrollY:', window.scrollY);
-            }, 100);
-            setTimeout(() => {
-                console.log('Second scroll (click), window.scrollY:', window.scrollY);
-                window.scrollTo(0, 0);
-            }, 100);
-            // Прокрутка к последнему сообщению
+            window.scrollTo(0, 0);
+            // Возвращаем фокус на textarea после отправки
+            if (textareaRef.current) {
+                setTimeout(() => {
+                    textareaRef.current.focus();
+                }, 300);
+            }
             if (messagesEndRef.current) {
                 setTimeout(() => {
                     console.log('Scroll to bottom after send, messages count:', messages.length + 1);
@@ -136,6 +194,66 @@ export default function ChatPage() {
                 }, 300);
             }
         }
+    };
+
+    const handleInputFocus = (e) => {
+        console.log('Textarea focused:', {
+            event: e.type,
+            activeElement: document.activeElement === textareaRef.current,
+        });
+        setIsInputFocused(true);
+        // Прокрутка к самому низу при фокусе
+        if (chatMessagesRef.current && messagesEndRef.current) {
+            setTimeout(() => {
+                messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+            }, 100);
+        }
+    };
+
+    const handleInputBlur = (e) => {
+        console.log('Textarea blurred:', {
+            event: e.type,
+            activeElement: document.activeElement,
+        });
+        setIsInputFocused(false);
+        setKeyboardHeight(0);
+    };
+
+    const handleTouchStart = (e) => {
+        console.log('Textarea touchstart:', {
+            clientY: e.touches[0].clientY,
+            scrollY: window.scrollY,
+        });
+        e.preventDefault();
+        if (textareaRef.current) {
+            textareaRef.current.focus();
+        }
+    };
+
+    const handleTouchMove = (e) => {
+        console.log('Textarea touchmove:', {
+            clientY: e.touches[0].clientY,
+            scrollY: window.scrollY,
+        });
+    };
+
+    const handleTouchEnd = (e) => {
+        console.log('Textarea touchend:', {
+            clientY: e.changedTouches[0].clientY,
+            scrollY: window.scrollY,
+        });
+        // Принудительный фокус с задержкой
+        if (textareaRef.current && !isInputFocused) {
+            setTimeout(() => {
+                textareaRef.current.focus();
+            }, 100);
+        }
+    };
+
+    const handleSendButtonMouseDown = (e) => {
+        e.preventDefault(); // Предотвращаем потерю фокуса
+        handleSendMessage();
     };
 
     const formatTime = (timestamp) => {
@@ -147,7 +265,13 @@ export default function ChatPage() {
             <div className="settings-btn-cont" onClick={() => navigate('/settings')}>
                 <img src="/img/settings.svg" alt="Settings" />
             </div>
-            <div className="chat-messages" ref={chatMessagesRef}>
+            <div
+                className="chat-messages"
+                ref={chatMessagesRef}
+                style={{
+                    paddingBottom: `${keyboardHeight > 0 ? 60 + keyboardHeight : 120}px`,
+                }}
+            >
                 {messages.map((msg, index) => (
                     <div
                         key={index}
@@ -166,7 +290,7 @@ export default function ChatPage() {
                             </div>
                         )}
                         <div className="message-cont">
-                            {msg.role === 'assistant' && <span className='message-name'>Rice</span>}
+                            {msg.role === 'assistant' && <span className="message-name">Rice</span>}
                             <p className="message-content">{msg.content}</p>
                             <span className="message-time">{formatTime(msg.timestamp)}</span>
                         </div>
@@ -193,36 +317,36 @@ export default function ChatPage() {
                 )}
                 <div ref={messagesEndRef} />
             </div>
-            <div className="chat-input-cont">
-                <input
-                    type="text"
-                    ref={inputRef}
+            <div
+                className="chat-input-cont"
+                style={{
+                    bottom: `${keyboardHeight > 0 ? 5 + keyboardHeight : 50}px`,
+                }}
+            >
+                <textarea
+                    ref={textareaRef}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
+                    onFocus={handleInputFocus}
+                    onBlur={handleInputBlur}
+                    onTouchStart={handleTouchStart}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd}
                     onKeyPress={(e) => {
-                        if (e.key === 'Enter') {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
                             handleSendMessage();
-                            setTimeout(() => {
-                                if (inputRef.current) {
-                                    console.log('Blurring inputRef (Enter)');
-                                    inputRef.current.blur();
-                                } else {
-                                    console.log('Blurring activeElement (Enter)');
-                                    document.activeElement.blur();
-                                }
-                            }, );
-                            setTimeout(() => {
-                                console.log('Before scroll (Enter), window.scrollY:', window.scrollY);
-                                window.scrollTo(0, 0);
-                                console.log('After scroll (Enter), window.scrollY:', window.scrollY);
-                            }, );
                         }
                     }}
                     placeholder="написать..."
                     className="chat-input"
                 />
-                <div onClick={handleSendMessage} className="chat-send-btn">
-                    <img src="/img/send.svg" />
+                <div
+                    onClick={handleSendMessage}
+                    onMouseDown={handleSendButtonMouseDown}
+                    className="chat-send-btn"
+                >
+                    <img src="/img/send.svg" alt="Send" />
                 </div>
             </div>
         </div>
